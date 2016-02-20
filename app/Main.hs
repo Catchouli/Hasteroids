@@ -30,29 +30,34 @@ height = 600
 
 asteroids :: Signal (Bool, Bool, Bool, Bool) -> State -> SignalGen (Signal (IO ()))
 asteroids directionKey glossState = mdo
-  player <- transfer initialPlayer updatePlayer directionKey
+  let Player initialPosition initialVelocity initialRotation = initialPlayer
+  playerRotation <- transfer initialRotation updatePlayerRotation directionKey
+  playerVelocity <- transfer2 initialVelocity updatePlayerVelocity directionKey playerRotation
+  playerPosition <- transfer initialPosition updatePlayerPosition playerVelocity
+  player <- return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation
   return $ render glossState <$> player
 
-updatePlayer :: (Bool, Bool, Bool, Bool) -> Player -> Player
-updatePlayer (l, r, u, d) (Player (x, y) (vx, vy) rot) =
-  Player (wrapW $ x+vx, wrapH $ y+vy) newVelocity newRot
+updatePlayerRotation (l, r, _, _) rot
+  | l && r = rot
+  | l = rot - playerRotSpeed
+  | r = rot + playerRotSpeed
+  | not l && not r = rot
+
+updatePlayerVelocity (_, _, u, d) rot (vx, vy)
+  | u && d = (vx, vy)
+  | u = (vx + playerAcceleration * xspeed, vy + playerAcceleration * yspeed)
+  | d = (vx - playerAcceleration * xspeed, vy - playerAcceleration * yspeed)
+  | not u && not d = (vx, vy)
+  where
+    (xspeed, yspeed) = movementVector rot
+
+updatePlayerPosition (vx, vy) (x, y) = (wrapW $ x+vx, wrapH $ y+vy)
   where
     halfWidth = width / 2
     halfHeight = height / 2
     wrap min max val = ((val - min) `mod'` (max-min)) + min
     wrapW = wrap (-halfWidth) (halfWidth)
     wrapH = wrap (-halfHeight) (halfHeight)
-    (xspeed, yspeed) = movementVector rot
-    newRot
-      | l && r = rot
-      | l = rot - playerRotSpeed
-      | r = rot + playerRotSpeed
-      | not l && not r = rot
-    newVelocity
-      | u && d = (vx, vy)
-      | u = (vx + playerAcceleration * xspeed, vy + playerAcceleration * yspeed)
-      | d = (vx - playerAcceleration * xspeed, vy - playerAcceleration * yspeed)
-      | not u && not d = (vx, vy)
 
 movementVector rot = (sin (degToRad rot), cos (degToRad rot))
 
@@ -67,7 +72,6 @@ main = do
             pollEvents
             readInput window directionKeySink
             join network
-            --render glossState initialPlayer
             swapBuffers window
             threadDelay 20000
             esc <- keyIsPressed window Key'Escape
