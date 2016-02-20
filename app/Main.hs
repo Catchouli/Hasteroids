@@ -29,13 +29,16 @@ height :: Num a => a
 height = 600
 
 asteroids :: Signal (Bool, Bool, Bool, Bool) -> State -> SignalGen (Signal (IO ()))
-asteroids directionKey glossState = mdo
+asteroids directionKey glossState = do
+  player <- playerSignal directionKey
+  return $ render glossState <$> player
+
+playerSignal directionKey = do
   let Player initialPosition initialVelocity initialRotation = initialPlayer
   playerRotation <- transfer initialRotation updatePlayerRotation directionKey
   playerVelocity <- transfer2 initialVelocity updatePlayerVelocity directionKey playerRotation
   playerPosition <- transfer initialPosition updatePlayerPosition playerVelocity
-  player <- return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation
-  return $ render glossState <$> player
+  return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation
 
 updatePlayerRotation (l, r, _, _) rot
   | l && r = rot
