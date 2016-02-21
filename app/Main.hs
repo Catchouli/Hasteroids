@@ -56,16 +56,8 @@ asteroids randomGenerator directionKey glossState = do
   randomSeries <- stateful (random randomGenerator) nextRandom
   let randomNumbers = fmap (\(a,b) -> a) randomSeries
   player <- playerSignal directionKey
-  asteroidA <- asteroidSignal randomNumbers
-  asteroidB <- asteroidSignal randomNumbers
-  asteroidC <- asteroidSignal randomNumbers
-  asteroidD <- asteroidSignal randomNumbers
-  asteroidE <- asteroidSignal randomNumbers
-  asteroidF <- asteroidSignal randomNumbers
-  asteroidG <- asteroidSignal randomNumbers
-  asteroidH <- asteroidSignal randomNumbers
-  let asteroids = sequence [asteroidA, asteroidB, asteroidC, asteroidD, asteroidE, asteroidF, asteroidG, asteroidH]
-  return $ render glossState <$> player <*> asteroids <*> randomNumbers
+  asteroids <- replicateM 8 $ asteroidSignal randomNumbers
+  return $ render glossState <$> player <*> (sequence asteroids) <*> randomNumbers
 
 playerSignal :: Signal (Bool, Bool, Bool, Bool) -> SignalGen (Signal Player)
 playerSignal directionKey = do
