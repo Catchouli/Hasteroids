@@ -1,6 +1,6 @@
 {-# LANGUAGE RecursiveDo #-}
 
-import Control.Monad (when, join, unless)
+import Control.Monad (when, join, unless, replicateM)
 import Control.Monad.Fix (fix)
 import Control.Concurrent (threadDelay)
 import Graphics.UI.GLFW as GLFW
@@ -10,17 +10,37 @@ import Graphics.Gloss.Geometry.Angle
 import FRP.Elerea.Simple
 import System.Exit
 import System.Random
-import Data.Fixed
+import Data.Fixed (mod')
+import Data.List (sort)
 
 type Pos = Point
 type Vel = (Float, Float)
+type AngularVel = Float
 type Rot = Float
+type Size = Float
+
 data Player = Player Pos Vel Rot
+
+data Asteroid = Asteroid Path Size Pos Vel Rot AngularVel
 
 initialPlayer = Player (0, 0) (0, 0) 0
 
 playerAcceleration = 0.5
 playerRotSpeed = 10
+playerSize = 15
+
+minAsteroidVel = 1
+maxAsteroidVel = 3
+rangeAsteroidVel = maxAsteroidVel - minAsteroidVel
+
+minAsteroidSize = 20
+maxAsteroidSize = 45
+rangeAsteroidSize = maxAsteroidSize - minAsteroidSize
+
+maxAsteroidAngularVel = 5
+
+timeStep :: Int
+timeStep = 1000000 `quot` 60
 
 width :: Num a => a
 width = 800
@@ -28,16 +48,31 @@ width = 800
 height :: Num a => a
 height = 600
 
-asteroids :: Signal (Bool, Bool, Bool, Bool) -> State -> SignalGen (Signal (IO ()))
-asteroids directionKey glossState = do
-  player <- playerSignal directionKey
-  return $ render glossState <$> player
+nextRandom :: (RandomGen g) => (Int, g) -> (Int, g)
+nextRandom (a, g) = random g
 
+asteroids :: StdGen -> Signal (Bool, Bool, Bool, Bool) -> State -> SignalGen (Signal (IO ()))
+asteroids randomGenerator directionKey glossState = do
+  randomSeries <- stateful (random randomGenerator) nextRandom
+  let randomNumbers = fmap (\(a,b) -> a) randomSeries
+  player <- playerSignal directionKey
+  asteroidA <- asteroidSignal randomNumbers
+  asteroidB <- asteroidSignal randomNumbers
+  asteroidC <- asteroidSignal randomNumbers
+  asteroidD <- asteroidSignal randomNumbers
+  asteroidE <- asteroidSignal randomNumbers
+  asteroidF <- asteroidSignal randomNumbers
+  asteroidG <- asteroidSignal randomNumbers
+  asteroidH <- asteroidSignal randomNumbers
+  let asteroids = sequence [asteroidA, asteroidB, asteroidC, asteroidD, asteroidE, asteroidF, asteroidG, asteroidH]
+  return $ render glossState <$> player <*> asteroids <*> randomNumbers
+
+playerSignal :: Signal (Bool, Bool, Bool, Bool) -> SignalGen (Signal Player)
 playerSignal directionKey = do
   let Player initialPosition initialVelocity initialRotation = initialPlayer
   playerRotation <- transfer initialRotation updatePlayerRotation directionKey
   playerVelocity <- transfer2 initialVelocity updatePlayerVelocity directionKey playerRotation
-  playerPosition <- transfer initialPosition updatePlayerPosition playerVelocity
+  playerPosition <- transfer initialPosition updatePosition playerVelocity
   return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation
 
 updatePlayerRotation (l, r, _, _) rot
@@ -52,9 +87,9 @@ updatePlayerVelocity (_, _, u, d) rot (vx, vy)
   | d = (vx - playerAcceleration * xspeed, vy - playerAcceleration * yspeed)
   | not u && not d = (vx, vy)
   where
-    (xspeed, yspeed) = movementVector rot
+    (xspeed, yspeed) = angleToVector rot
 
-updatePlayerPosition (vx, vy) (x, y) = (wrapW $ x+vx, wrapH $ y+vy)
+updatePosition (vx, vy) (x, y) = (wrapW $ x+vx, wrapH $ y+vy)
   where
     halfWidth = width / 2
     halfHeight = height / 2
@@ -62,36 +97,87 @@ updatePlayerPosition (vx, vy) (x, y) = (wrapW $ x+vx, wrapH $ y+vy)
     wrapW = wrap (-halfWidth) (halfWidth)
     wrapH = wrap (-halfHeight) (halfHeight)
 
-movementVector rot = (sin (degToRad rot), cos (degToRad rot))
+randomAsteroid = do
+  --let path = map angleToVector [0,70..359]
+  let allowNegative = subtract 1.0 . (*2.0)
+  let halfWidth = width / 2
+  let halfHeight = height / 2
+  size <- getStdRandom random :: IO Float
+  x <- getStdRandom random :: IO Float
+  y <- getStdRandom random :: IO Float
+  vx <- getStdRandom random :: IO Float
+  vy <- getStdRandom random :: IO Float
+  rot <- getStdRandom random :: IO Float
+  angularVel <- getStdRandom random :: IO Float
+  vertexCount <- getStdRandom (randomR (4,7)) :: IO Int
+  vertexAngles <- replicateM vertexCount $ (getStdRandom (randomR (0.0, 360.0)) :: IO Float)
+  let path = map angleToVector $ sort vertexAngles
+  return $ Asteroid
+            path
+            (rangeAsteroidSize * size + minAsteroidSize)
+            ( allowNegative (x * halfWidth)
+            , allowNegative (y * halfHeight))
+            ( rangeAsteroidVel* (allowNegative vx) + minAsteroidVel
+            , rangeAsteroidVel* (allowNegative vy) + minAsteroidVel)
+            rot
+            (angularVel * maxAsteroidAngularVel)
+
+randomAsteroids count = do
+  asteroids <- replicateM count asteroidSignal
+  return asteroids
+
+asteroidSignal :: Signal Int -> SignalGen (Signal Asteroid)
+asteroidSignal randomSignal = do
+  Asteroid path size pos vel rot angularVel <- execute randomAsteroid
+  asteroidSize <- snapshot $ fmap (fromIntegral . (+10) . flip mod' 10) randomSignal
+  asteroidVel <- stateful vel id
+  asteroidPos <- transfer pos updatePosition asteroidVel
+  asteroidAngularVel <- stateful angularVel id
+  asteroidRot <- transfer rot (\vel rot -> vel + rot) asteroidAngularVel
+  return $ Asteroid path <$> asteroidSize <*> asteroidPos <*> asteroidVel <*> asteroidRot <*> asteroidAngularVel
+
+-- Don't know how to generalise T_T
+--randomSignal :: RandomGen g => g -> SignalGen (Signal a)
+--randomSignal g = do
+--  randomNumber <- stateful (random g) nextRandom
+--  return $ fmap (\(a, b) -> a) randomNumber
 
 main :: IO ()
 main = do
   (directionKey, directionKeySink) <- external (False, False, False, False)
   glossState <- initState
+  randomGenerator <- newStdGen
   withWindow width height "Hasteroids" $ \window -> do
-    network <- start $ asteroids directionKey glossState
+    network <- start $ asteroids randomGenerator directionKey glossState
     let loop =
           do
             pollEvents
             readInput window directionKeySink
             join network
             swapBuffers window
-            threadDelay 20000
+            threadDelay timeStep
             esc <- keyIsPressed window Key'Escape
             unless esc loop
           in loop
 
-render glossState player = do
-  displayPicture (width, height) white glossState 1.0 $
-    Pictures $ [ renderPlayer player
-               ]
+render glossState player asteroids a = do
+  displayPicture (width, height) black glossState 1.0 $
+    Pictures $  [ renderPlayer player]
+                ++ (map renderAsteroid asteroids)
 
 renderPlayer (Player (x, y) _ rot) =
-  Color blue $
+  Color white $
   translate x y $
   rotate rot $
-  scale 50 50 $
-  polygon [(-0.707,-0.707), (0, 1), (0.707, -0.707)]
+  scale playerSize playerSize $
+  lineLoop [(-0.707,-0.707), (0, 1), (0.707, -0.707)]
+
+renderAsteroid (Asteroid path size (x, y) _ rot _) =
+  Color green $
+  translate x y $
+  rotate rot $
+  scale size size $
+  lineLoop path
 
 readInput window directionKeySink = do
   l <- keyIsPressed window Key'Left
@@ -126,3 +212,5 @@ withWindow width height title f = do
   where
     simpleErrorCallback e s =
       putStrLn $ unwords [show e, show s]
+
+angleToVector rot = (sin (degToRad rot), cos (degToRad rot))

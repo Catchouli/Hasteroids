@@ -32,6 +32,7 @@ executable hasteroids-exe
                      , random
                      , FTGL
                      , GLFW-b
+                     , mtl
   default-language:    Haskell2010
 
 test-suite hasteroids-test
