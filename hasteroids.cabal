@@ -16,7 +16,17 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Random
+                     , Window
+                     , Maths
   build-depends:       base >= 4.7 && < 5
+                     , gloss >= 1.9 && < 2
+                     , gloss-rendering >= 1.9 && < 2
+                     , OpenGL == 2.12.0.1
+                     , elerea
+                     , random
+                     , FTGL
+                     , GLFW-b
+                     , mtl
   default-language:    Haskell2010
 
 executable hasteroids-exe
