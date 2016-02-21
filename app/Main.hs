@@ -97,15 +97,13 @@ asteroids glossState directionKey shootKey = do
   asteroids <- replicateM 8 $ asteroidSignal
 
   lift $ do
-    -- Test bullet
-    bullet <- bulletSignal (0, 0) (-5, -3)
-
+    -- Shooting
     shootKeyPrev <- delay False shootKey
     shootPressed <- transfer2 False (\prev cur _ -> not prev && cur) shootKeyPrev shootKey
     newBullets <- generator (bulletGenerator <$> shootPressed <*> player)
     bullets <- collection newBullets ((\_ _ -> True) <$> shootPressed)
 
-    return $ render glossState <$> player <*> (sequence asteroids) <*> bullets--(sequence bullets)
+    return $ render glossState <$> player <*> (sequence asteroids) <*> bullets
 
 -- The player signal
 playerSignal :: Signal (Bool, Bool, Bool, Bool) -> StateT StdGen SignalGen (Signal Player)
