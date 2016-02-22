@@ -29,14 +29,14 @@ type AngularVel = Float
 type Rot = Float
 type Size = Float
 
-data Player = Player Pos Vel Rot
+data Player = Player Pos Vel Rot Bool
 
 data Asteroid = Asteroid Path Size Pos Vel Rot AngularVel
 
 data Bullet = Bullet Pos Vel
 
 -- Initial game states
-initialPlayer = Player (0, 0) (0, 0) 0
+initialPlayer = Player (0, 0) (0, 0) 0 False
 
 -- Game data
 playerAcceleration = 0.5
@@ -64,37 +64,35 @@ width, height :: Num a => a
 width = 800
 height = 600
 
--- Bullet generator
-bulletGenerator :: Bool -> Player -> SignalGen [Signal Bullet]
-bulletGenerator shoot (Player (px, py) (pvx, pvy) (prot)) = do
-  let playerDir@(playerDirX, playerDirY) = angleToVector prot
-    in if shoot
-          then (:[]) <$> bulletSignal
-                          (px + playerDirX * playerSize, py + playerDirY * playerSize)
-                          (playerDirX * bulletSpeed + pvx, playerDirY * bulletSpeed + pvy)
-          else return []
-
--- Signal collector for bullets
-collection :: Signal [Signal a] -> Signal (a -> Bool) -> SignalGen (Signal [a])
-collection source isAlive = mdo
-  boltSignals <- delay [] (map snd <$> boltsAndSignals')
-  bolts <- memo (liftA2 (++) source boltSignals)
-  let boltsAndSignals = zip <$> (sequence =<< bolts) <*> bolts
-  boltsAndSignals' <- memo (filter <$>((.fst) <$> isAlive) <*> boltsAndSignals)
-  return $ map fst <$> boltsAndSignals'
-
 -- The main signal for the game
 asteroids :: Gloss.State -> Signal (Bool, Bool, Bool, Bool) -> Signal Bool -> StateT StdGen SignalGen (Signal (IO ()))
-asteroids glossState directionKey shootKey = do
+asteroids glossState directionKey shootKey = mdo
   -- Input
   shootKeyPrev <- lift $ delay False shootKey
   shootPressed <- lift $ transfer2 False (\prev cur _ -> not prev && cur) shootKeyPrev shootKey
 
   -- Player
-  player <- playerSignal directionKey
+  player <- playerSignal directionKey playerDead
 
   -- Initial asteroids
   asteroids <- replicateM 8 $ asteroidSignal
+
+  -- Using a random asteroid for the initial value for delayed asteroid signals is dumb but easier
+  randomAsteroid <- getRandomAsteroid
+
+  -- Delayed signals
+  player' <- lift $ delay initialPlayer player
+  asteroids' <- lift $ sequence $ map (delay randomAsteroid) asteroids
+
+  -- Map over asteroids to generate collision signals for the player with each asteroid
+  playerAsteroidCollisions <- lift $ return $ fmap (playerAsteroidCollision <$> player' <*>) asteroids'
+
+  -- Fold signals into one 'player colliding with asteroid' signal
+  let playerColliding = foldS (||) False playerAsteroidCollisions
+
+  -- Player dead signal
+  --playerDead <- lift $ until playerColliding
+  playerDead <- lift $ transfer False (||) playerColliding
 
   lift $ do
     -- Shooting
@@ -106,14 +104,19 @@ asteroids glossState directionKey shootKey = do
     return $ render glossState <$> player <*> (sequence asteroids) <*> bullets
 
 -- The player signal
-playerSignal :: Signal (Bool, Bool, Bool, Bool) -> StateT StdGen SignalGen (Signal Player)
-playerSignal directionKey = do
+playerSignal :: Signal (Bool, Bool, Bool, Bool) -> Signal Bool -> StateT StdGen SignalGen (Signal Player)
+playerSignal directionKey colliding = do
   lift $ do
-    let Player initialPosition initialVelocity initialRotation = initialPlayer
+    let Player initialPosition initialVelocity initialRotation _ = initialPlayer
     playerRotation <- transfer initialRotation updatePlayerRotation directionKey
     playerVelocity <- transfer2 initialVelocity updatePlayerVelocity directionKey playerRotation
     playerPosition <- transfer initialPosition updatePosition playerVelocity
-    return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation
+    return $ Player <$> playerPosition <*> playerVelocity <*> playerRotation <*> colliding
+
+--playerCollisionSignal playerSignal asteroidSignal = playerAsteroidCollision <$> playerSignal <*> asteroidSignal
+
+playerAsteroidCollision (Player (px, py) _ prot _) (Asteroid path size (ax, ay) _ _ _) =
+      (ax - px)^2 + (ay - py)^2 < (size+playerSize)^2
 
 -- Update the player rotation given the input direcitons
 updatePlayerRotation (l, r, _, _) rot
@@ -181,10 +184,24 @@ bulletSignal pos vel = do
     bulletPos <- transfer pos updatePosition bulletVel
     return $ Bullet <$> bulletPos <*> bulletVel
 
-mkshot shoot =
-  if shoot
-    then (:[]) <$> stateful 0 id
-    else return []
+-- Bullet generator
+bulletGenerator :: Bool -> Player -> SignalGen [Signal Bullet]
+bulletGenerator shoot (Player (px, py) (pvx, pvy) (prot) _) = do
+  let playerDir@(playerDirX, playerDirY) = angleToVector prot
+    in if shoot
+          then (:[]) <$> bulletSignal
+                          (px + playerDirX * playerSize, py + playerDirY * playerSize)
+                          (playerDirX * bulletSpeed + pvx, playerDirY * bulletSpeed + pvy)
+          else return []
+
+-- Signal collector for bullets
+collection :: Signal [Signal a] -> Signal (a -> Bool) -> SignalGen (Signal [a])
+collection source isAlive = mdo
+  boltSignals <- delay [] (map snd <$> boltsAndSignals')
+  bolts <- memo (liftA2 (++) source boltSignals)
+  let boltsAndSignals = zip <$> (sequence =<< bolts) <*> bolts
+  boltsAndSignals' <- memo (filter <$>((.fst) <$> isAlive) <*> boltsAndSignals)
+  return $ map fst <$> boltsAndSignals'
 
 -- Entry point
 main :: IO ()
@@ -215,12 +232,20 @@ render glossState player asteroids bullets = do
                    ++ (map renderBullet bullets)
 
 -- Render the player
-renderPlayer (Player (x, y) _ rot) =
-  Gloss.Color Gloss.white $
-  Gloss.translate x y $
-  Gloss.rotate rot $
-  Gloss.scale playerSize playerSize $
-  Gloss.lineLoop [(-0.707,-0.707), (0, 1), (0.707, -0.707)]
+renderPlayer (Player (x, y) _ rot dead) =
+  if dead
+    then
+      Gloss.Blank
+    else
+      Gloss.Color Gloss.white $
+      Gloss.translate x y $
+      Gloss.rotate rot $
+      Gloss.scale playerSize playerSize $
+      Gloss.lineLoop [(-0.707,-0.707), (0, 1), (0.707, -0.707)]
+      --where
+      --  color
+      --    | not colliding = Gloss.white
+      --    |     colliding = Gloss.red
 
 -- Render an asteroid
 renderAsteroid (Asteroid path size (x, y) _ rot _) =
@@ -246,3 +271,7 @@ readInput window directionKeySink shootKeySink = do
   s <- keyIsPressed window Key'Space
   directionKeySink (l, r, u, d)
   shootKeySink s
+
+-- Fold over a signal
+foldS :: (a -> b -> b) -> b -> [Signal a] -> Signal b
+foldS f b signals = foldr (\signal acc -> f <$> signal <*> acc) (return b) signals
