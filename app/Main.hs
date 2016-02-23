@@ -55,22 +55,32 @@ maxAsteroidAngularVel = 5
 
 bulletSpeed = 5
 
+shootTime :: Fractional a => a
+shootTime = 1/8 -- seconds
+
 -- Time each step
+updateFreq :: Int
+updateFreq = 60
+
 timeStep :: Int
-timeStep = 1000000 `quot` 60
+timeStep = 1000000 `quot` updateFreq
 
 -- Window width and height
 width, height :: Num a => a
 width = 800
 height = 600
 
+-- Seconds to steps
+steps :: Num a => a -> a
+steps seconds = seconds * (fromIntegral updateFreq)
+
+-- Update the shoot timer signal, current value -> whether shoot is pressed -> new value
+updateShootTimer :: (Num a) => Bool -> a -> a
+updateShootTimer shootPressed prev = if shootPressed then 0 else prev + 1
+
 -- The main signal for the game
 asteroids :: Gloss.State -> Signal (Bool, Bool, Bool, Bool) -> Signal Bool -> StateT StdGen SignalGen (Signal (IO ()))
 asteroids glossState directionKey shootKey = mdo
-  -- Input
-  shootKeyPrev <- lift $ delay False shootKey
-  shootPressed <- lift $ transfer2 False (\prev cur _ -> not prev && cur) shootKeyPrev shootKey
-
   -- Player
   player <- playerSignal directionKey playerDead
 
@@ -91,17 +101,22 @@ asteroids glossState directionKey shootKey = mdo
   let playerColliding = foldS (||) False playerAsteroidCollisions
 
   -- Player dead signal
-  --playerDead <- lift $ until playerColliding
   playerDead <- lift $ transfer False (||) playerColliding
+  playerAlive <- lift $ return $ not <$> playerDead
 
-  lift $ do
+  lift $ mdo
     -- Shooting
     shootKeyPrev <- delay False shootKey
     shootPressed <- transfer2 False (\prev cur _ -> not prev && cur) shootKeyPrev shootKey
-    newBullets <- generator (bulletGenerator <$> shootPressed <*> player)
+    shootTimer <- transfer (steps shootTime) updateShootTimer wasShooting
+    canShoot <- return $ (>= (steps shootTime)) <$> shootTimer
+    shooting <- return $ foldS (&&) True [canShoot, shootPressed, playerAlive]
+    wasShooting <- delay False shooting
+    newBullets <- generator (bulletGenerator <$> shooting <*> player)
     bullets <- collection newBullets ((\_ _ -> True) <$> shootPressed)
 
     return $ render glossState <$> player <*> (sequence asteroids) <*> bullets
+    --return $ print <$> shooting
 
 -- The player signal
 playerSignal :: Signal (Bool, Bool, Bool, Bool) -> Signal Bool -> StateT StdGen SignalGen (Signal Player)
